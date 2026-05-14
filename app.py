@@ -23,6 +23,8 @@ MEDQUAD_PATH = 'medDataset_processed.csv'
 model = None
 disease_database = {}
 medquad_data = None
+medquad_vectorizer = None   # Pre-built TF-IDF index for fast MedQuAD search
+medquad_matrix = None
 IMAGE_MODEL = None
 
 def get_image_model():
@@ -57,8 +59,15 @@ def load_model_and_data():
 
     if os.path.exists(MEDQUAD_PATH):
         try:
+            from sklearn.feature_extraction.text import TfidfVectorizer as TV
             medquad_data = pd.read_csv(MEDQUAD_PATH).head(5000)
-        except: pass
+            medquad_data.dropna(subset=['Question', 'Answer'], inplace=True)
+            # Pre-build TF-IDF index once at startup — makes search instant!
+            medquad_vectorizer = TV(stop_words='english', max_features=3000)
+            medquad_matrix = medquad_vectorizer.fit_transform(medquad_data['Question'].astype(str))
+            logger.info(f"MedQuAD indexed: {len(medquad_data)} entries")
+        except Exception as e:
+            logger.error(f"MedQuAD load error: {e}")
 
 load_model_and_data()
 
@@ -110,14 +119,17 @@ def predict_disease():
         if greet: return jsonify({'formatted_response': f"👋 {greet}", 'source': 'Chat Engine'}), 200
 
         expert = None
-        if medquad_data is not None:
-            query_words = set(query.lower().split())
-            if len(query_words) >= 2:
-                for _, row in medquad_data.iterrows():
-                    q_words = set(str(row['Question']).lower().split())
-                    if len(query_words.intersection(q_words)) >= 3:
-                        expert = row['Answer']
-                        break
+        if medquad_vectorizer is not None and medquad_data is not None:
+            try:
+                import numpy as np
+                from sklearn.metrics.pairwise import cosine_similarity
+                q_vec = medquad_vectorizer.transform([query])
+                scores = cosine_similarity(q_vec, medquad_matrix)[0]
+                best_idx = scores.argmax()
+                if scores[best_idx] > 0.25:  # Only use if relevance is high enough
+                    expert = medquad_data.iloc[best_idx]['Answer']
+            except Exception as e:
+                logger.error(f"MedQuAD search error: {e}")
         
         if expert: return jsonify({'formatted_response': f"Expert Knowledge:\n\n{expert}", 'source': 'MedQuAD'}), 200
 
