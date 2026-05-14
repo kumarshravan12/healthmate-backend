@@ -66,10 +66,19 @@ def detect_language(text):
     keywords = ['mujhe', 'hai', 'ho', 'raha', 'rahi', 'dard', 'kya', 'karun', 'bukhar', 'sardi']
     return "hinglish" if any(k in text.lower() for k in keywords) else "english"
 
+import re
+
 def handle_greetings(query):
     greetings = {"hi": "Hello!", "hello": "Hi!", "hey": "Hey!", "good morning": "Good morning!"}
+    
+    # If the user asks a long medical question that happens to contain "hi", we should probably answer the medical part.
+    # But to be safe, we check if the greeting is a distinct word.
     for k, v in greetings.items():
-        if k in query.lower(): return f"{v} I'm HealthMate AI. How can I help?"
+        if re.search(r'\b' + re.escape(k) + r'\b', query.lower()):
+            # If it's a long query (more than 5 words), skip greeting and go to prediction
+            if len(query.split()) > 5:
+                return None
+            return f"{v} I'm HealthMate AI. How can I help?"
     return None
 
 @app.route('/predict-image', methods=['POST'])
@@ -96,7 +105,7 @@ def predict_disease():
         data = request.get_json()
         query = data.get('symptoms', '').strip()
         if not query: return jsonify({'error': 'Empty query'}), 400
-            
+        
         greet = handle_greetings(query)
         if greet: return jsonify({'formatted_response': f"👋 {greet}", 'source': 'Chat Engine'}), 200
 
@@ -113,18 +122,30 @@ def predict_disease():
         if expert: return jsonify({'formatted_response': f"Expert Knowledge:\n\n{expert}", 'source': 'MedQuAD'}), 200
 
         if model:
-            pred = model.predict([query])[0]
+            probs = model.predict_proba([query])[0]
+            max_prob = max(probs)
+            pred = model.classes_[probs.argmax()]
+            
+            lang = detect_language(query)
+            
+            # Confidence Threshold - if the model is guessing blindly
+            if max_prob < 0.10:
+                if lang == "hinglish":
+                    res = "Maaf kijiye, mujhe in lakshano (symptoms) se bimari theek se samajh nahi aa rahi. Kripya thoda aur detail mein batayein (jaise: fever, cough, sar dard)."
+                else:
+                    res = "I'm not completely sure based on those symptoms. Could you please provide a bit more detail (e.g., fever, cough, headache)?"
+                return jsonify({'formatted_response': res, 'source': 'ML Engine'}), 200
+
             info = disease_database.get(pred.lower(), {
                 'tablets': 'Consult a doctor',
                 'precautions': 'Take rest',
                 'description': 'No additional details found.'
             })
-            lang = detect_language(query)
             
             if lang == "hinglish":
-                res = f"Aapko {pred.upper()} ho sakta hai.\n\nTablets: {info['tablets']}\nPrecautions: {info['precautions']}"
+                res = f"Aapke lakshano se lagta hai ki aapko {pred.upper()} ho sakta hai.\n\n💊 Tablets: {info['tablets']}\n🛡️ Precautions: {info['precautions']}"
             else:
-                res = f"Based on symptoms, you might have {pred.upper()}.\n\nDetails: {info['description']}\nTablets: {info['tablets']}\nPrecautions: {info['precautions']}"
+                res = f"Based on your symptoms, you might have {pred.upper()}.\n\nℹ️ Details: {info['description']}\n💊 Tablets: {info['tablets']}\n🛡️ Precautions: {info['precautions']}"
             
             return jsonify({'disease': pred, 'formatted_response': res, 'source': 'ML Engine'}), 200
 

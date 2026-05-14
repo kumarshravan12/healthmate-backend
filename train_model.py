@@ -80,8 +80,8 @@ def train_and_export_model():
     logger.info("Initializing NLP pipeline (TF-IDF + Random Forest)...")
     # n_jobs=-1 for faster training using all cores
     model = make_pipeline(
-        TfidfVectorizer(stop_words='english'), 
-        RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1)
+        TfidfVectorizer(stop_words='english', ngram_range=(1, 3), max_features=5000), 
+        RandomForestClassifier(n_estimators=200, random_state=42, n_jobs=-1, class_weight='balanced')
     )
 
     logger.info("Training model on the full medical dataset. This might take a few seconds...")
